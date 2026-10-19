@@ -57,7 +57,7 @@ abstract class DbTestCase extends TestCase
         return $stmt->fetch();
     }
 
-    protected function count(string $sql, array $params = []): int
+    protected function countRows(string $sql, array $params = []): int
     {
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);

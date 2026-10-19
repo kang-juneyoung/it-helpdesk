@@ -16,7 +16,7 @@ final class AuthTest extends DbTestCase
         $this->assertTrue($result['ok']);
         $this->assertSame('김생산', $result['user']['name']);
         $this->assertArrayNotHasKey('password_hash', $result['user']);
-        $this->assertSame(1, $this->count("SELECT COUNT(*) FROM audit_logs WHERE action = 'login' AND ip = '192.168.0.31'"));
+        $this->assertSame(1, $this->countRows("SELECT COUNT(*) FROM audit_logs WHERE action = 'login' AND ip = '192.168.0.31'"));
     }
 
     public function testPasswordIsStoredAsHashNotPlainText(): void
@@ -64,7 +64,7 @@ final class AuthTest extends DbTestCase
         $this->auth->attempt('kim', 'wrong');
         $this->auth->attempt('kim', 'staff1234!');
 
-        $this->assertSame(0, $this->count("SELECT failed_count FROM users WHERE username = 'kim'"));
+        $this->assertSame(0, $this->countRows("SELECT failed_count FROM users WHERE username = 'kim'"));
     }
 
     public function testAdminUnlock(): void

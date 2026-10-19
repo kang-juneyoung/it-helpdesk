@@ -85,7 +85,7 @@ final class AssetRepositoryTest extends DbTestCase
 
         $this->assertSame([], $this->assets->search(['q' => "' OR '1'='1"]));
         $this->assertSame([], $this->assets->search(['dept' => "회계팀' OR 1=1 --"]));
-        $this->assertSame(1, $this->count('SELECT COUNT(*) FROM assets'));
+        $this->assertSame(1, $this->countRows('SELECT COUNT(*) FROM assets'));
     }
 
     public function testUpdateWritesChangedFieldsToAuditLog(): void

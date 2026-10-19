@@ -94,7 +94,7 @@ final class BackupServiceTest extends DbTestCase
         $this->assertSame('최근 백업 파일 크기 0', $results['그룹웨어']['detail']);
         $this->assertStringContainsString('80시간 전', $results['파일서버']['detail']);
         $this->assertSame('백업 파일 없음', $results['MES_DB']['detail']);
-        $this->assertSame(4, $this->count("SELECT COUNT(*) FROM backups WHERE source = '자동'"));
+        $this->assertSame(4, $this->countRows("SELECT COUNT(*) FROM backups WHERE source = '자동'"));
     }
 
     public function testScanDirectoryFailsLoudlyWhenFolderMissing(): void
