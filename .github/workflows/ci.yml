@@ -8,6 +8,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false   # 한쪽 DB가 실패해도 다른 쪽 결과를 끝까지 본다
       matrix:
         db: [sqlite, mysql]
     services:
@@ -52,6 +53,18 @@ jobs:
         run: |
           php bin/init_db.php
           php -S 127.0.0.1:8070 -t public > /tmp/server.log 2>&1 &
-          sleep 1
-          curl -sf http://127.0.0.1:8070/index.php?r=login | grep -q '사내 전산 관리'
-          ! grep -iE 'warning|fatal' /tmp/server.log
+          # 서버가 뜰 때까지 최대 10초 기다린다
+          for i in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:8070/index.php?r=login && break
+            sleep 0.5
+          done
+          curl -sf -o /tmp/login.html http://127.0.0.1:8070/index.php?r=login
+          grep -q '사내 전산 관리' /tmp/login.html
+          # 화면에 PHP 경고·오류 문구가 섞여 나오면 실패
+          if grep -qiE 'Warning:|Fatal error|Notice:|Deprecated:' /tmp/login.html; then
+            echo "화면에 PHP 오류 출력"; exit 1
+          fi
+
+      - name: 서버 로그
+        if: always() && matrix.db == 'sqlite'
+        run: cat /tmp/server.log || true
