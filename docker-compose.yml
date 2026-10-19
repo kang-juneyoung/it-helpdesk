@@ -1,0 +1,38 @@
+# MySQL(MariaDB) + PHP/Apache 로 실행
+#   docker compose up -d
+#   docker compose exec app php bin/init_db.php      # 데모 데이터
+#   http://localhost:8070  (admin / admin1234!)
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_DATABASE: helpdesk
+      MARIADB_USER: helpdesk
+      MARIADB_PASSWORD: ${DB_PASS:-change-me}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:-change-me-root}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+
+  app:
+    build: .
+    ports:
+      - "8070:80"
+    environment:
+      DB_DSN: "mysql:host=db;dbname=helpdesk;charset=utf8mb4"
+      DB_USER: helpdesk
+      DB_PASS: ${DB_PASS:-change-me}
+      BACKUP_DIR: /backup
+      BACKUP_MAX_HOURS: "26"
+    volumes:
+      - ./sample-backup:/backup:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:

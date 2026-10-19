@@ -1,0 +1,7 @@
+/vendor/
+/data/
+/logs/
+.env
+.DS_Store
+.phpunit.result.cache
+.phpunit.cache/

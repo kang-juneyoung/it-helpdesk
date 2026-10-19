@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        db: [sqlite, mysql]
+    services:
+      mysql:
+        image: mariadb:10.11
+        env:
+          MARIADB_DATABASE: helpdesk_test
+          MARIADB_USER: helpdesk
+          MARIADB_PASSWORD: ci-pass
+          MARIADB_ROOT_PASSWORD: ci-root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_sqlite, pdo_mysql, mbstring
+
+      - name: 문법 검사
+        run: find src public bin views tests -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+
+      - run: composer install --no-interaction --no-progress
+
+      - name: 테스트 (SQLite)
+        if: matrix.db == 'sqlite'
+        run: vendor/bin/phpunit
+
+      - name: 테스트 (MySQL)
+        if: matrix.db == 'mysql'
+        env:
+          TEST_DB_DSN: "mysql:host=127.0.0.1;port=3306;dbname=helpdesk_test;charset=utf8mb4"
+          TEST_DB_USER: helpdesk
+          TEST_DB_PASS: ci-pass
+        run: vendor/bin/phpunit
+
+      - name: 데모 데이터로 화면 열어 보기
+        if: matrix.db == 'sqlite'
+        run: |
+          php bin/init_db.php
+          php -S 127.0.0.1:8070 -t public > /tmp/server.log 2>&1 &
+          sleep 1
+          curl -sf http://127.0.0.1:8070/index.php?r=login | grep -q '사내 전산 관리'
+          ! grep -iE 'warning|fatal' /tmp/server.log
