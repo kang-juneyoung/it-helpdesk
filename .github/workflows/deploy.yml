@@ -1,0 +1,148 @@
+name: Deploy
+
+# CI(테스트)가 main에서 통과하면 → 이미지 빌드(GHCR) → AWS EC2에 배포 → 밖에서 접속 확인.
+# 서버 접속은 SSH가 아니라 AWS SSM으로 한다: 22번 포트를 열지 않고, SSH 키도 저장하지 않는다.
+# AWS 인증은 OIDC: GitHub에 AWS 액세스 키를 저장하지 않고, 실행할 때마다 임시 자격 증명을 받는다.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:        # 수동 재배포 (Actions 화면의 Run workflow)
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false # 배포 도중에 끊지 않는다. 다음 배포는 줄 서서 기다린다
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  build:
+    name: 이미지 빌드
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: 배포할 커밋 정하기
+        id: meta
+        run: |
+          # CI가 통과한 바로 그 커밋을 배포한다 (그 사이 올라온 커밋이 섞이지 않게)
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.meta.outputs.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # 태그는 커밋 SHA: 어떤 코드가 서버에 올라가 있는지 항상 추적할 수 있고, 롤백은 이전 SHA로 되돌리면 된다
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha }}
+            ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: EC2 배포
+    needs: build
+    # AWS 설정(저장소 Variables)이 아직 없으면 배포는 건너뛴다 → 설정 전에도 CI가 깨지지 않는다
+    if: vars.AWS_DEPLOY_ROLE_ARN != '' && vars.EC2_INSTANCE_ID != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    permissions:
+      contents: read
+      id-token: write       # OIDC 토큰 발급 (AWS 임시 자격 증명용)
+    env:
+      SHA: ${{ needs.build.outputs.sha }}
+      INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+    steps:
+      - name: AWS 인증 (OIDC, 액세스 키 없음)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 서버에서 배포 스크립트 실행 (SSM)
+        run: |
+          RAW="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${SHA}/deploy"
+          # 서버 설정 파일도 같은 커밋 것을 받아 쓴다 → 코드와 배포 설정의 버전이 항상 같다
+          CMDS=$(jq -cn --arg raw "$RAW" --arg sha "$SHA" '[
+            "set -eu",
+            "cd /opt/it-helpdesk",
+            "curl -fsSL \($raw)/docker-compose.prod.yml -o docker-compose.prod.yml",
+            "curl -fsSL \($raw)/deploy.sh -o deploy.sh",
+            "chmod +x deploy.sh",
+            "./deploy.sh \($sha)"
+          ]')
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy ${SHA:0:12}" \
+            --timeout-seconds 600 \
+            --parameters "{\"commands\": $CMDS, \"executionTimeout\": [\"600\"]}" \
+            --query Command.CommandId --output text)
+          echo "SSM 명령 ID: $CMD_ID"
+
+          # 끝날 때까지 최대 10분 기다린다
+          STATUS=Pending
+          for _ in $(seq 1 120); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+                       --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Pending|InProgress|Delayed) sleep 5 ;; *) break ;; esac
+          done
+
+          echo "──── 서버 출력 ────"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text
+          echo "──── 서버 오류 출력 ────"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardErrorContent --output text
+          echo "결과: $STATUS"
+          [ "$STATUS" = "Success" ]
+
+      - name: 밖에서 접속 확인
+        if: vars.APP_URL != ''
+        run: |
+          for _ in $(seq 1 10); do
+            if curl -sf --max-time 10 "${{ vars.APP_URL }}/index.php?r=login" | grep -q '사내 전산 관리'; then
+              echo "정상: ${{ vars.APP_URL }}"; exit 0
+            fi
+            sleep 3
+          done
+          echo "외부에서 로그인 화면이 열리지 않습니다 (보안 그룹 80번 포트, 인스턴스 상태 확인)"; exit 1
+
+      - name: 배포 기록
+        if: always()
+        run: |
+          {
+            echo "### 배포 결과: ${{ job.status }}"
+            echo "- 커밋: \`${SHA:0:12}\`"
+            echo "- 이미지: \`${{ needs.build.outputs.image }}:${SHA:0:12}…\`"
+            echo "- 서버: \`$INSTANCE_ID\` (${{ env.AWS_REGION }})"
+          } >> "$GITHUB_STEP_SUMMARY"

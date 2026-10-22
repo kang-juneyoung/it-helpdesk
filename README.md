@@ -95,7 +95,8 @@ views/                화면 템플릿
 db/                   스키마 (MySQL / SQLite)
 bin/                  init_db.php(초기화), check_backup.php(cron)
 tests/                PHPUnit 테스트 40개
-docs/adr/             설계 결정 기록 4건
+deploy/               운영 서버용 compose, 배포 스크립트, EC2 초기 설정, IAM 정책
+docs/adr/             설계 결정 기록 5건
 ```
 
 ## 테스트
@@ -109,12 +110,33 @@ TEST_DB_USER=helpdesk TEST_DB_PASS=*** vendor/bin/phpunit   # MySQL
 
 GitHub Actions가 커밋마다 SQLite와 MySQL(MariaDB 10.11) 두 가지로 테스트하고, 데모 화면이 뜨는지 확인합니다.
 
+## 배포 (CI/CD → AWS)
+
+main에 push하면 테스트를 통과한 커밋만 AWS EC2에 자동으로 배포됩니다.
+
+```
+push → CI(문법·PHPUnit 40개·화면 확인) → 이미지 빌드(GHCR, 태그=커밋 SHA)
+     → OIDC로 AWS 임시 인증 → SSM으로 EC2에서 deploy.sh 실행
+     → 새 버전 교체 → 헬스체크 → 실패하면 직전 버전으로 자동 롤백
+```
+
+| 항목 | 방식 |
+|---|---|
+| AWS 인증 | OIDC 임시 자격 증명. GitHub에 AWS 액세스 키를 저장하지 않음 |
+| 서버 접속 | SSM. 22번 포트·SSH 키 없음. 배포 역할은 태그가 붙은 인스턴스에만 명령 가능 |
+| 버전 추적 | 이미지 태그 = 커밋 SHA, 서버에 배포 이력 기록 |
+| 실패 대응 | 헬스체크 실패 시 직전 SHA로 자동 롤백, Actions는 실패로 표시 |
+| 비밀번호 | 서버 `.env`에만 보관 (EC2 생성 시 무작위 생성) |
+
+워크플로: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) · 서버 스크립트: [`deploy/deploy.sh`](deploy/deploy.sh) · 설정 방법: [docs/DEPLOY.md](docs/DEPLOY.md) · 설계 이유: [ADR 0005](docs/adr/0005-deploy-aws-ssm-oidc.md)
+
 ## 설계 결정 (ADR)
 
 1. [프레임워크 없이 PHP + PDO](docs/adr/0001-plain-php-pdo.md) — 중소기업 사내 PHP 시스템을 이어받아 고치는 상황에 맞춤
 2. [운영 MySQL, 데모·테스트 SQLite](docs/adr/0002-mysql-and-sqlite.md) — 표준 SQL만 사용
 3. [보안 기본기](docs/adr/0003-security-basics.md)
 4. [백업 점검은 파일 시각·크기로](docs/adr/0004-backup-check-by-file.md)
+5. [AWS 배포: GitHub Actions + OIDC + SSM](docs/adr/0005-deploy-aws-ssm-oidc.md) — 액세스 키·SSH 키 없이 배포, 자동 롤백
 
 ## 범위와 한계
 

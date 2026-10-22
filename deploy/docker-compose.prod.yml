@@ -1,0 +1,39 @@
+# 운영(데모) 서버용. 서버의 /opt/it-helpdesk 에 놓이고, deploy.sh가 실행한다.
+# 앱은 소스로 빌드하지 않고 GitHub Actions가 만든 이미지를 받아 쓴다 (태그 = 커밋 SHA).
+# 비밀번호는 서버의 .env 파일에만 있다 (저장소에 없음).
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: helpdesk
+      MARIADB_USER: helpdesk
+      MARIADB_PASSWORD: ${DB_PASS:?서버 .env에 DB_PASS 필요}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:?서버 .env에 DB_ROOT_PASS 필요}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+
+  app:
+    image: ${IMAGE_REPO:?서버 .env에 IMAGE_REPO 필요}:${APP_TAG:?배포할 태그 필요}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      DB_DSN: "mysql:host=db;dbname=helpdesk;charset=utf8mb4"
+      DB_USER: helpdesk
+      DB_PASS: ${DB_PASS}
+      BACKUP_DIR: /backup
+      BACKUP_MAX_HOURS: "26"
+    volumes:
+      - ./backup:/backup:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:
