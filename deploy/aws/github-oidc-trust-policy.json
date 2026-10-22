@@ -11,7 +11,7 @@
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:kang-juneyoung/it-helpdesk:environment:production"
+          "token.actions.githubusercontent.com:sub": "repo:kang-juneyoung@58846281/it-helpdesk@1425188896:environment:production"
         }
       }
     }

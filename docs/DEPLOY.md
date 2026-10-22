@@ -60,6 +60,12 @@ IAM → 역할 → 역할 생성 → 사용자 지정 신뢰 정책
 
 이 역할은 **이 저장소의 production 환경**에서만 쓸 수 있고, **`App=it-helpdesk` 태그가 붙은 인스턴스에 셸 명령 보내기**만 할 수 있습니다.
 
+> **sub 값 주의.** GitHub가 보내는 OIDC 토큰의 `sub`에는 계정·저장소 고유 ID가 붙습니다.
+> `repo:kang-juneyoung@58846281/it-helpdesk@1425188896:environment:production`
+> 이름만 쓴 `repo:kang-juneyoung/it-helpdesk:...` 로 조건을 걸면 `Not authorized to perform sts:AssumeRoleWithWebIdentity`로 거절됩니다.
+> 실제 값은 CloudTrail → 이벤트 기록 → 이벤트 이름 `AssumeRoleWithWebIdentity` → `userIdentity.userName`에서 확인할 수 있습니다.
+> ID가 들어가 있어 저장소를 지우고 같은 이름으로 다시 만들어도 이 역할을 쓸 수 없습니다(사칭 방지).
+
 ## 5. GitHub 저장소 변수
 
 Settings → Secrets and variables → Actions → **Variables** 탭 (비밀값이 아니므로 Secrets 아님)
@@ -78,6 +84,13 @@ Settings → Secrets and variables → Actions → **Variables** 탭 (비밀값�
 2. 첫 실행 후 GitHub 프로필 → Packages → `it-helpdesk` → Package settings → **Change visibility → Public**
    (서버가 로그인 없이 이미지를 받기 위해 한 번만 필요)
 3. 다시 Run workflow → `APP_URL` 접속 → `admin / admin1234!` (데모 계정)
+
+## 문제 해결 기록
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `The web identity token provided could not be validated` | 계정에 GitHub OIDC 공급자 미등록 | 1단계 공급자 등록 |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | 신뢰 정책 `sub` 조건이 실제 토큰 값(ID 포함 형식)과 다름 | CloudTrail에서 실제 `sub` 확인 후 신뢰 정책 수정 |
 
 ## 운영 메모
 
